@@ -1,12 +1,10 @@
 {
-    "total_sales": 1300,
-    "total_orders": 2,
+    "total_sales": 800,
+    "total_orders": 1,
     "weekly_target": 1500,
-    "today_sales": 500,
-    "today_orders": 1,
+    "today_sales": 0,
+    "today_orders": 0,
     "last_date": "2026-06-07",
-    "last_entry": {
-        "amount": 500
-    },
+    "last_entry": null,
     "notes": []
 }

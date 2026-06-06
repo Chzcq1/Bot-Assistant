@@ -5,7 +5,15 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
-const DB_FILE = path.resolve(process.cwd(), "../../bot/database.json");
+function findWorkspaceRoot(): string {
+  let dir = process.cwd();
+  while (dir !== path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, "pnpm-workspace.yaml"))) return dir;
+    dir = path.dirname(dir);
+  }
+  return process.cwd();
+}
+const DB_FILE = path.join(findWorkspaceRoot(), "bot", "database.json");
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -379,11 +387,12 @@ export async function setupWebhook() {
     logger.warn("TELEGRAM_BOT_TOKEN not set — skipping webhook setup");
     return;
   }
-  const domain = process.env.REPLIT_DEV_DOMAIN;
-  if (!domain) {
-    logger.warn("REPLIT_DEV_DOMAIN not set — skipping webhook setup");
+  const rawDomain = process.env.REPLIT_DOMAINS ?? process.env.REPLIT_DEV_DOMAIN;
+  if (!rawDomain) {
+    logger.warn("No domain env var found — skipping webhook setup");
     return;
   }
+  const domain = rawDomain.split(",")[0].trim();
   const webhookUrl = `https://${domain}/api/telegram`;
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
