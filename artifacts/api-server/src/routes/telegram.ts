@@ -5,7 +5,7 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
-const DB_FILE = path.join(process.cwd(), "bot", "database.json");
+const DB_FILE = path.resolve(process.cwd(), "../../bot/database.json");
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
