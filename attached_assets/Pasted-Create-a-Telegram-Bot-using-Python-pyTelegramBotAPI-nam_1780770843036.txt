@@ -1,0 +1,20 @@
+Create a Telegram Bot using Python (pyTelegramBotAPI) named "Eggplant Assistant" for an internal admin group of 2 admins managing sales targets. 
+
+Strict Requirements:
+1. This is a BACKEND ONLY bot. Do not create any web UI, frontend HTML, or web app pages. Focus only on the bot.py script.
+2. Use a local file (like database.json or a text file) to store the state so that data persists even if the repl restarts.
+
+Features to implement:
+- Variables to store: 'total_sales' (starts at 0), 'total_orders' (starts at 0), and 'weekly_target' (default is 6000).
+- Admin command '/start' or '/status': Display a beautifully formatted dashboard using Markdown. It must show:
+  * Current accumulated sales (total_sales)
+  * Number of successful slips closed (total_orders)
+  * The active target (weekly_target)
+  * Automatically calculate the remaining balance to reach the target. If target is met, display a celebratory message.
+- Target Setting: Add a command '/settarget <number>' allowing admins to change the 'weekly_target' dynamically.
+- Input Handling (Accumulation): Any pure number message sent to the chat (e.g., "100") should be intercepted. The bot must add this number to 'total_sales', increment 'total_orders' by 1, save to database, and reply with the updated total.
+- Motivational System (Cheer Up): Every time a number is added, the bot must randomly select and append a powerful, high-energy, motivational quote in Thai encouraging the admins to keep closing deals from their 600-user free pool group. (Prepare an array of at least 5 different intense Thai motivational sentences).
+- Broadcast Announcement Command: Add a command '/broadcast <message>' or '/announce <message>' where the bot formats the text beautifully with emoji dividers so the admin can copy-paste it directly to use for announcements in other groups.
+- Reset Command: Add a '/reset' command to wipe the current accumulated sales and orders back to 0 for a fresh weekly cycle, but keep the weekly_target value.
+
+Please build the entire structure and install all necessary packages.
