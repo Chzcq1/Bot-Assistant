@@ -1,5 +1,10 @@
 {
     "total_sales": 0,
     "total_orders": 0,
-    "weekly_target": 6000
+    "weekly_target": 6000,
+    "today_sales": 0,
+    "today_orders": 0,
+    "last_date": "",
+    "last_entry": null,
+    "notes": []
 }
