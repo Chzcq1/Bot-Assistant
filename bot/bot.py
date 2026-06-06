@@ -96,7 +96,7 @@ def build_dashboard(data):
         target_line = f"🎯 เหลืออีก `{num(remaining)}` บาท จะถึงเป้า"
 
     return (
-        f"🍆 *\\=\\=\\= EGGPLANT ASSISTANT \\=\\=\\=* 🍆\n\n"
+        f"🍆 *\\=\\= EGGPLANT ASSISTANT \\=\\=* 🍆\n\n"
         f"📅 *วันนี้ {esc(today_date)}*\n"
         f"├ 💵 ยอดวันนี้: `{num(today_sales)}` บาท\n"
         f"└ 📦 ปิดวันนี้: `{today_orders}` ออร์เดอร์\n\n"
