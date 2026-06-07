@@ -6,5 +6,10 @@
     "today_orders": 0,
     "last_date": "2026-06-07",
     "last_entry": null,
-    "notes": []
+    "notes": [
+        {
+            "text": "ให้เขาไปที่ Settings > Data and Storage > Storage Usage > กด Clear Telegram Cache",
+            "time": "07/06 03:31"
+        }
+    ]
 }

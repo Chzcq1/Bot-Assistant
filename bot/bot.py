@@ -96,7 +96,7 @@ def build_dashboard(data):
         target_line = f"🎯 เหลืออีก `{num(remaining)}` บาท จะถึงเป้า"
 
     return (
-        f"🍆 *\\=\\= EGGPLANT ASSISTANT \\=\\=* 🍆\n\n"
+        f"🍆 *\\= EGGPLANT ASSISTANT \\=* 🍆\n\n"
         f"📅 *วันนี้ {esc(today_date)}*\n"
         f"├ 💵 ยอดวันนี้: `{num(today_sales)}` บาท\n"
         f"└ 📦 ปิดวันนี้: `{today_orders}` ออร์เดอร์\n\n"
@@ -113,7 +113,7 @@ def build_dashboard(data):
 
 # ─── Commands ──────────────────────────────────────────────────────────────────
 
-@bot.message_handler(commands=["start", "status"])
+@bot.message_handler(commands=["start", "status", "dashboard", "st"])
 def cmd_status(message):
     data = load_db()
     bot.reply_to(message, build_dashboard(data), parse_mode="MarkdownV2")
@@ -130,7 +130,7 @@ def cmd_how(message):
         "บอทจะบวกยอดเข้าระบบและเพิ่มออร์เดอร์ 1 รายการทันที\n\n"
         "━━━━━━━━━━━━━━━━━\n\n"
         "📋 *รายการคำสั่งทั้งหมด*\n\n"
-        "📊 `/start` หรือ `/status`\n"
+        "📊 `/start` หรือ `/st`\n"
         "   ➜ ดูแดชบอร์ดยอดขายรวม\n\n"
         "📅 `/today`\n"
         "   ➜ ดูสรุปยอดขายเฉพาะวันนี้\n\n"
