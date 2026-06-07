@@ -222,7 +222,7 @@ function buildDashboard(data: BotDB): string {
   const adminSection = buildAdminSection(data.admins);
 
   return [
-    `🍆 *\\=\\=\\= EGGPLANT ASSISTANT \\=\\=\\=* 🍆\n`,
+    `🍆 *\\=\\= EGGPLANT ASSISTANT \\=\\=* 🍆\n`,
     `📅 *วันนี้ ${esc(date)}*`,
     `├ 💵 ยอดวันนี้: \`${num(today_sales)}\` บาท`,
     `└ 📦 ปิดวันนี้: \`${today_orders}\` ออร์เดอร์\n`,
