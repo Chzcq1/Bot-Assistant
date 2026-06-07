@@ -26,6 +26,12 @@ interface AdminStats {
   last_date: string;
 }
 
+interface DailyEntry {
+  date: string;   // YYYY-MM-DD
+  sales: number;
+  orders: number;
+}
+
 interface BotDB {
   total_sales: number;
   total_orders: number;
@@ -36,6 +42,7 @@ interface BotDB {
   last_entry: { amount: number; admin?: string } | null;
   notes: Array<{ text: string; time: string }>;
   admins: { [identifier: string]: AdminStats };
+  daily_history: DailyEntry[];
 }
 
 interface TgMessage {
@@ -50,12 +57,19 @@ interface TgMessage {
   };
 }
 
+interface TgCallbackQuery {
+  id: string;
+  from: { id: number; username?: string; first_name?: string; last_name?: string };
+  message: { message_id: number; chat: { id: number } };
+  data?: string;
+}
+
 // ─── Database Helpers ──────────────────────────────────────────────────────────
 
 const DB_DEFAULT: BotDB = {
   total_sales: 0, total_orders: 0, weekly_target: 6000,
   today_sales: 0, today_orders: 0, last_date: "",
-  last_entry: null, notes: [], admins: {},
+  last_entry: null, notes: [], admins: {}, daily_history: [],
 };
 
 function todayStr(): string {
@@ -83,14 +97,13 @@ function loadDB(): BotDB {
     return data;
   }
   const raw = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-  data = { ...DB_DEFAULT, ...raw, admins: raw.admins ?? {} };
+  data = { ...DB_DEFAULT, ...raw, admins: raw.admins ?? {}, daily_history: raw.daily_history ?? [] };
 
   const today = todayStr();
   if (data.last_date !== today) {
     data.today_sales = 0;
     data.today_orders = 0;
     data.last_date = today;
-    // Reset today stats for each admin
     for (const key of Object.keys(data.admins)) {
       if (data.admins[key].last_date !== today) {
         data.admins[key].today_sales = 0;
@@ -105,6 +118,35 @@ function loadDB(): BotDB {
 
 function saveDB(data: BotDB) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 4), "utf-8");
+}
+
+// ─── Daily History Helpers ─────────────────────────────────────────────────────
+
+function updateDailyHistory(data: BotDB, amount: number) {
+  const today = todayStr();
+  if (!data.daily_history) data.daily_history = [];
+  const entry = data.daily_history.find(d => d.date === today);
+  if (entry) {
+    entry.sales += amount;
+    entry.orders += 1;
+  } else {
+    data.daily_history.push({ date: today, sales: amount, orders: 1 });
+  }
+  // Keep last 7 days only, sorted ascending
+  data.daily_history.sort((a, b) => a.date.localeCompare(b.date));
+  if (data.daily_history.length > 7) {
+    data.daily_history = data.daily_history.slice(-7);
+  }
+}
+
+function undoDailyHistory(data: BotDB, amount: number) {
+  const today = todayStr();
+  if (!data.daily_history) return;
+  const entry = data.daily_history.find(d => d.date === today);
+  if (entry) {
+    entry.sales = Math.max(0, entry.sales - amount);
+    entry.orders = Math.max(0, entry.orders - 1);
+  }
 }
 
 // ─── Admin Identifier ──────────────────────────────────────────────────────────
@@ -148,6 +190,39 @@ function progressBar(pct: number, length = 10): string {
   return "🟩".repeat(filled) + "⬜".repeat(length - filled);
 }
 
+const DAY_LABELS: Record<number, string> = {
+  0: "อา", 1: "จ", 2: "อ", 3: "พ", 4: "พฤ", 5: "ศ", 6: "ส",
+};
+
+function buildGrowthChart(history: DailyEntry[]): string {
+  if (!history || history.length === 0) return "";
+
+  const maxSales = Math.max(...history.map(d => d.sales), 1);
+  const BAR_MAX = 8;
+
+  const lines: string[] = [
+    `\n━━━━━━━━━━━━━━━━━\n`,
+    `📊 *ยอดขาย 7 วันที่ผ่านมา*\n`,
+  ];
+
+  for (const entry of history) {
+    const dateObj = new Date(`${entry.date}T12:00:00+07:00`);
+    const dow = dateObj.getDay();
+    const label = DAY_LABELS[dow] ?? "??";
+    const isToday = entry.date === todayStr();
+
+    const barLen = Math.round((entry.sales / maxSales) * BAR_MAX);
+    const bar = "🟩".repeat(barLen) || "▫️";
+    const salesStr = esc(num(entry.sales));
+    const todayTag = isToday ? " \\(วันนี้\\)" : "";
+
+    const dayPad = label.length <= 1 ? `${label} ` : label;
+    lines.push(`\`${dayPad}\` ${bar} \`${salesStr}฿\`${todayTag}`);
+  }
+
+  return lines.join("\n");
+}
+
 const MOTIVATIONAL_QUOTES = [
   "🔥 อย่าหยุด! ทุกออร์เดอร์คือก้าวหนึ่งสู่เป้าหมาย ไม่มีใครรวยได้โดยไม่ลงมือทำ!",
   "💪 คนที่ชนะไม่ใช่คนที่เก่งที่สุด แต่คือคนที่ไม่ยอมแพ้! ปิดดีลต่อไป!",
@@ -186,13 +261,59 @@ async function sendMessage(chatId: number, text: string, parseMode = "MarkdownV2
   }
 }
 
+async function sendMessageWithKeyboard(
+  chatId: number,
+  text: string,
+  inlineKeyboard: Array<Array<{ text: string; callback_data: string }>>,
+  parseMode = "MarkdownV2",
+) {
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: parseMode,
+        message_thread_id: TOPIC_ID,
+        reply_markup: { inline_keyboard: inlineKeyboard },
+      }),
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to send Telegram keyboard message");
+  }
+}
+
+async function answerCallbackQuery(callbackQueryId: string, text?: string) {
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to answer callback query");
+  }
+}
+
+async function editMessageText(chatId: number, messageId: number, text: string, parseMode = "MarkdownV2") {
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: parseMode }),
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to edit Telegram message");
+  }
+}
+
 // ─── Dashboard Builder ──────────────────────────────────────────────────────────
 
 function buildAdminSection(admins: { [key: string]: AdminStats }): string {
   const entries = Object.entries(admins).filter(([, s]) => s.sales > 0 || s.orders > 0);
   if (entries.length === 0) return "";
 
-  // Sort by total sales descending
   entries.sort(([, a], [, b]) => b.sales - a.sales);
 
   const lines = [`\n━━━━━━━━━━━━━━━━━\n`, `👥 *ฝีมือแอดมิน*\n`];
@@ -220,6 +341,7 @@ function buildDashboard(data: BotDB): string {
     : `🎯 เหลืออีก \`${num(remaining)}\` บาท จะถึงเป้า`;
 
   const adminSection = buildAdminSection(data.admins);
+  const chartSection = buildGrowthChart(data.daily_history ?? []);
 
   return [
     `🍆 *\\=\\= EGGPLANT ASSISTANT \\=\\=* 🍆\n`,
@@ -235,6 +357,7 @@ function buildDashboard(data: BotDB): string {
     `${bar}\n`,
     targetLine,
     adminSection,
+    chartSection,
     `\n━━━━━━━━━━━━━━━━━`,
   ].join("\n");
 }
@@ -277,7 +400,6 @@ async function handleMyStats(msg: TgMessage) {
     return;
   }
 
-  // Rank
   const entries = Object.entries(data.admins).filter(([, s]) => s.sales > 0);
   entries.sort(([, a], [, b]) => b.sales - a.sales);
   const rank = entries.findIndex(([k]) => k === adminId) + 1;
@@ -308,7 +430,7 @@ async function handleHow(msg: TgMessage) {
     `🍆 *EGGPLANT BOT — Quick Ref*\n`,
     `นับยอด: พิมพ์ \`นับ500\` \`นับ1200\`\n`,
     `━━━━━━━━━━━━━━━━━`,
-    `/status — แดชบอร์ดรวม`,
+    `/status — แดชบอร์ดรวม \\+ กราฟ 7 วัน`,
     `/today — ยอดวันนี้`,
     `/mystats — ยอดของฉัน`,
     `/settarget 8000 — ตั้งเป้า`,
@@ -353,7 +475,6 @@ async function handleUndo(msg: TgMessage) {
   data.today_sales  = Math.max(0, data.today_sales - amount);
   data.today_orders = Math.max(0, data.today_orders - 1);
 
-  // Undo admin stats if we know who did it
   if (lastAdmin && data.admins[lastAdmin]) {
     data.admins[lastAdmin].sales  = Math.max(0, data.admins[lastAdmin].sales - amount);
     data.admins[lastAdmin].orders = Math.max(0, data.admins[lastAdmin].orders - 1);
@@ -361,6 +482,7 @@ async function handleUndo(msg: TgMessage) {
     data.admins[lastAdmin].today_orders = Math.max(0, data.admins[lastAdmin].today_orders - 1);
   }
 
+  undoDailyHistory(data, amount);
   data.last_entry = null;
   saveDB(data);
   await sendMessage(msg.chat.id,
@@ -415,7 +537,6 @@ async function handleDelNote(msg: TgMessage, args: string) {
     );
     return;
   }
-  // /notes shows newest-first, so index 1 = last element
   const realIdx = total - n;
   const removed = data.notes.splice(realIdx, 1)[0];
   saveDB(data);
@@ -424,6 +545,8 @@ async function handleDelNote(msg: TgMessage, args: string) {
   );
 }
 
+// ─── Two-Step Confirmation: ClearNotes ─────────────────────────────────────────
+
 async function handleClearNotes(msg: TgMessage) {
   const data = loadDB();
   const count = data.notes.length;
@@ -431,29 +554,71 @@ async function handleClearNotes(msg: TgMessage) {
     await sendMessage(msg.chat.id, "📒 ไม่มีโน้ตให้ลบ", "Markdown");
     return;
   }
-  data.notes = [];
-  saveDB(data);
-  await sendMessage(msg.chat.id, `🗑 *ลบโน้ตทั้งหมด ${count} รายการแล้ว\\!*`);
+  await sendMessageWithKeyboard(
+    msg.chat.id,
+    `⚠️ *ยืนยันการลบโน้ต*\n\nคุณแน่ใจหรือไม่ที่จะลบโน้ตทั้งหมด *${count} รายการ*?\nการกระทำนี้ไม่สามารถย้อนกลับได้`,
+    [[
+      { text: "✅ Yes, Confirm", callback_data: "confirm_clearnotes" },
+      { text: "❌ No, Cancel", callback_data: "cancel_clearnotes" },
+    ]],
+  );
 }
 
+// ─── Two-Step Confirmation: Reset ──────────────────────────────────────────────
+
 async function handleReset(msg: TgMessage) {
-  const data = loadDB();
-  const target = data.weekly_target;
-  data.total_sales  = 0;
-  data.total_orders = 0;
-  data.today_sales  = 0;
-  data.today_orders = 0;
-  data.last_entry   = null;
-  data.admins       = {};
-  saveDB(data);
-  await sendMessage(msg.chat.id,
-    `🔄 *รีเซ็ตสำเร็จ\\!* เริ่มรอบสัปดาห์ใหม่\n\n` +
-    `💰 ยอดขาย: \`0\` บาท\n` +
-    `📦 ออร์เดอร์: \`0\` รายการ\n` +
-    `👥 ยอดแอดมินทุกคน: รีเซ็ตแล้ว\n` +
-    `🎯 เป้าหมายยังคงอยู่ที่: \`${num(target)}\` บาท\n\n` +
-    `💪 มาลุยกัน\\! สัปดาห์นี้ต้องปิดให้ได้\\!`
+  await sendMessageWithKeyboard(
+    msg.chat.id,
+    `⚠️ *ยืนยันการรีเซ็ต*\n\nคุณแน่ใจหรือไม่ที่จะรีเซ็ตยอดขายและออร์เดอร์ทั้งหมด?\nเป้าหมายจะยังคงอยู่ แต่ยอดขายและออร์เดอร์จะถูกตั้งเป็น 0`,
+    [[
+      { text: "✅ Yes, Confirm", callback_data: "confirm_reset" },
+      { text: "❌ No, Cancel", callback_data: "cancel_reset" },
+    ]],
   );
+}
+
+// ─── Callback Query Handler ─────────────────────────────────────────────────────
+
+async function handleCallbackQuery(cbq: TgCallbackQuery) {
+  const { id: cbqId, message, data: cbData } = cbq;
+  const chatId = message.chat.id;
+  const msgId = message.message_id;
+
+  if (cbData === "confirm_reset") {
+    const db = loadDB();
+    const target = db.weekly_target;
+    db.total_sales  = 0;
+    db.total_orders = 0;
+    db.today_sales  = 0;
+    db.today_orders = 0;
+    db.last_entry   = null;
+    db.admins       = {};
+    saveDB(db);
+    await answerCallbackQuery(cbqId, "✅ รีเซ็ตสำเร็จ!");
+    await editMessageText(chatId, msgId,
+      `🔄 *รีเซ็ตสำเร็จ\\!* เริ่มรอบสัปดาห์ใหม่\n\n` +
+      `💰 ยอดขาย: \`0\` บาท\n` +
+      `📦 ออร์เดอร์: \`0\` รายการ\n` +
+      `👥 ยอดแอดมินทุกคน: รีเซ็ตแล้ว\n` +
+      `🎯 เป้าหมายยังคงอยู่ที่: \`${num(target)}\` บาท\n\n` +
+      `💪 มาลุยกัน\\! สัปดาห์นี้ต้องปิดให้ได้\\!`
+    );
+  } else if (cbData === "cancel_reset") {
+    await answerCallbackQuery(cbqId, "❌ ยกเลิกแล้ว");
+    await editMessageText(chatId, msgId, `❌ *ยกเลิกการรีเซ็ต* — ข้อมูลยังคงเดิม`);
+  } else if (cbData === "confirm_clearnotes") {
+    const db = loadDB();
+    const count = db.notes.length;
+    db.notes = [];
+    saveDB(db);
+    await answerCallbackQuery(cbqId, "✅ ลบโน้ตแล้ว!");
+    await editMessageText(chatId, msgId,
+      `🗑 *ลบโน้ตทั้งหมด ${count} รายการแล้ว\\!*`
+    );
+  } else if (cbData === "cancel_clearnotes") {
+    await answerCallbackQuery(cbqId, "❌ ยกเลิกแล้ว");
+    await editMessageText(chatId, msgId, `❌ *ยกเลิกการลบโน้ต* — โน้ตยังคงอยู่`);
+  }
 }
 
 async function handleBroadcast(msg: TgMessage, content: string) {
@@ -484,20 +649,19 @@ async function handleCount(msg: TgMessage, raw: string) {
   const adminId = getAdminId(msg);
   const data = loadDB();
 
-  // Update global stats
   data.total_sales  += amount;
   data.total_orders += 1;
   data.today_sales  += amount;
   data.today_orders += 1;
   data.last_entry = { amount, admin: adminId };
 
-  // Update per-admin stats
   const adminStats = ensureAdmin(data, adminId);
   adminStats.sales  += amount;
   adminStats.orders += 1;
   adminStats.today_sales  += amount;
   adminStats.today_orders += 1;
 
+  updateDailyHistory(data, amount);
   saveDB(data);
 
   const { total_sales, total_orders, today_orders, weekly_target } = data;
@@ -530,17 +694,18 @@ async function handleMessage(msg: TgMessage) {
   const cmd = cmdRaw.toLowerCase().split("@")[0];
   const args = rest.join(" ");
 
-  if (cmd === "/start" || cmd === "/status") return handleStatus(msg);
-  if (cmd === "/today")                      return handleToday(msg);
-  if (cmd === "/mystats")                    return handleMyStats(msg);
-  if (cmd === "/how")                        return handleHow(msg);
-  if (cmd === "/settarget")                  return handleSetTarget(msg, args);
-  if (cmd === "/undo")                       return handleUndo(msg);
-  if (cmd === "/note")                       return handleNote(msg, args);
-  if (cmd === "/notes")                      return handleNotes(msg);
-  if (cmd === "/delnote")                    return handleDelNote(msg, args);
-  if (cmd === "/clearnotes")                 return handleClearNotes(msg);
-  if (cmd === "/reset")                      return handleReset(msg);
+  if (cmd === "/start" || cmd === "/status" || cmd === "/dashboard" || cmd === "/st")
+    return handleStatus(msg);
+  if (cmd === "/today")     return handleToday(msg);
+  if (cmd === "/mystats")   return handleMyStats(msg);
+  if (cmd === "/how")       return handleHow(msg);
+  if (cmd === "/settarget") return handleSetTarget(msg, args);
+  if (cmd === "/undo")      return handleUndo(msg);
+  if (cmd === "/note")      return handleNote(msg, args);
+  if (cmd === "/notes")     return handleNotes(msg);
+  if (cmd === "/delnote")   return handleDelNote(msg, args);
+  if (cmd === "/clearnotes") return handleClearNotes(msg);
+  if (cmd === "/reset")     return handleReset(msg);
   if (cmd === "/broadcast" || cmd === "/announce") return handleBroadcast(msg, args);
 
   if (text.startsWith("นับ")) return handleCount(msg, text.slice(3));
@@ -589,6 +754,7 @@ router.get("/bot-status", (_req, res) => {
       today_sales: data.today_sales,
       today_orders: data.today_orders,
       admins: data.admins,
+      daily_history: data.daily_history,
     });
   } catch {
     res.status(500).json({ error: "Could not read database" });
@@ -597,9 +763,18 @@ router.get("/bot-status", (_req, res) => {
 
 router.post("/telegram", (req, res) => {
   res.sendStatus(200);
-  const message: TgMessage | undefined = req.body?.message ?? req.body?.edited_message;
+  const body = req.body;
+
+  // Handle normal messages
+  const message: TgMessage | undefined = body?.message ?? body?.edited_message;
   if (message?.text) {
     handleMessage(message).catch((err) => logger.error({ err }, "Error handling message"));
+  }
+
+  // Handle inline keyboard button presses
+  const cbq: TgCallbackQuery | undefined = body?.callback_query;
+  if (cbq?.data) {
+    handleCallbackQuery(cbq).catch((err) => logger.error({ err }, "Error handling callback query"));
   }
 });
 
