@@ -5,6 +5,7 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
+
 function findWorkspaceRoot(): string {
   let dir = process.cwd();
   while (dir !== path.dirname(dir)) {
@@ -17,6 +18,14 @@ const DB_FILE = path.join(findWorkspaceRoot(), "bot", "database.json");
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
+interface AdminStats {
+  sales: number;
+  orders: number;
+  today_sales: number;
+  today_orders: number;
+  last_date: string;
+}
+
 interface BotDB {
   total_sales: number;
   total_orders: number;
@@ -24,14 +33,21 @@ interface BotDB {
   today_sales: number;
   today_orders: number;
   last_date: string;
-  last_entry: { amount: number } | null;
+  last_entry: { amount: number; admin?: string } | null;
   notes: Array<{ text: string; time: string }>;
+  admins: { [identifier: string]: AdminStats };
 }
 
 interface TgMessage {
   message_id: number;
   chat: { id: number };
   text?: string;
+  from?: {
+    id: number;
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+  };
 }
 
 // ─── Database Helpers ──────────────────────────────────────────────────────────
@@ -39,7 +55,7 @@ interface TgMessage {
 const DB_DEFAULT: BotDB = {
   total_sales: 0, total_orders: 0, weekly_target: 6000,
   today_sales: 0, today_orders: 0, last_date: "",
-  last_entry: null, notes: [],
+  last_entry: null, notes: [], admins: {},
 };
 
 function todayStr(): string {
@@ -66,12 +82,22 @@ function loadDB(): BotDB {
     saveDB(data);
     return data;
   }
-  data = { ...DB_DEFAULT, ...JSON.parse(fs.readFileSync(DB_FILE, "utf-8")) };
+  const raw = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+  data = { ...DB_DEFAULT, ...raw, admins: raw.admins ?? {} };
+
   const today = todayStr();
   if (data.last_date !== today) {
     data.today_sales = 0;
     data.today_orders = 0;
     data.last_date = today;
+    // Reset today stats for each admin
+    for (const key of Object.keys(data.admins)) {
+      if (data.admins[key].last_date !== today) {
+        data.admins[key].today_sales = 0;
+        data.admins[key].today_orders = 0;
+        data.admins[key].last_date = today;
+      }
+    }
     saveDB(data);
   }
   return data;
@@ -79,6 +105,32 @@ function loadDB(): BotDB {
 
 function saveDB(data: BotDB) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 4), "utf-8");
+}
+
+// ─── Admin Identifier ──────────────────────────────────────────────────────────
+
+function getAdminId(msg: TgMessage): string {
+  if (msg.from?.username) return `@${msg.from.username}`;
+  if (msg.from?.first_name) {
+    const name = msg.from.last_name
+      ? `${msg.from.first_name} ${msg.from.last_name}`
+      : msg.from.first_name;
+    return name;
+  }
+  return `User${msg.from?.id ?? "unknown"}`;
+}
+
+function ensureAdmin(data: BotDB, adminId: string): AdminStats {
+  if (!data.admins[adminId]) {
+    data.admins[adminId] = { sales: 0, orders: 0, today_sales: 0, today_orders: 0, last_date: "" };
+  }
+  const today = todayStr();
+  if (data.admins[adminId].last_date !== today) {
+    data.admins[adminId].today_sales = 0;
+    data.admins[adminId].today_orders = 0;
+    data.admins[adminId].last_date = today;
+  }
+  return data.admins[adminId];
 }
 
 // ─── Formatting Helpers ────────────────────────────────────────────────────────
@@ -127,7 +179,27 @@ async function sendMessage(chatId: number, text: string, parseMode = "MarkdownV2
   }
 }
 
-// ─── Dashboard Builder ─────────────────────────────────────────────────────────
+// ─── Dashboard Builder ──────────────────────────────────────────────────────────
+
+function buildAdminSection(admins: { [key: string]: AdminStats }): string {
+  const entries = Object.entries(admins).filter(([, s]) => s.sales > 0 || s.orders > 0);
+  if (entries.length === 0) return "";
+
+  // Sort by total sales descending
+  entries.sort(([, a], [, b]) => b.sales - a.sales);
+
+  const lines = [`\n━━━━━━━━━━━━━━━━━\n`, `👥 *ฝีมือแอดมิน*\n`];
+  entries.forEach(([name, stats], i) => {
+    const prefix = i === entries.length - 1 ? "└" : "├";
+    const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
+    lines.push(
+      `${prefix} ${medal} ${esc(name)}`,
+      `   💵 รอบนี้: \`${num(stats.sales)}\` บาท \\(${stats.orders} ออร์เดอร์\\)`,
+      `   📅 วันนี้: \`${num(stats.today_sales)}\` บาท \\(${stats.today_orders} ออร์เดอร์\\)`,
+    );
+  });
+  return lines.join("\n");
+}
 
 function buildDashboard(data: BotDB): string {
   const { total_sales, total_orders, weekly_target, today_sales, today_orders } = data;
@@ -139,6 +211,8 @@ function buildDashboard(data: BotDB): string {
   const targetLine = total_sales >= weekly_target
     ? `🎉 *TARGET ACHIEVED\\!* 🎊 ยอดเกินเป้า \\+${esc(num(total_sales - weekly_target))} บาท\\!`
     : `🎯 เหลืออีก \`${num(remaining)}\` บาท จะถึงเป้า`;
+
+  const adminSection = buildAdminSection(data.admins);
 
   return [
     `🍆 *\\=\\=\\= EGGPLANT ASSISTANT \\=\\=\\=* 🍆\n`,
@@ -153,6 +227,7 @@ function buildDashboard(data: BotDB): string {
     `📈 ความคืบหน้า: \`${pct}%\``,
     `${bar}\n`,
     targetLine,
+    adminSection,
     `\n━━━━━━━━━━━━━━━━━`,
   ].join("\n");
 }
@@ -183,6 +258,44 @@ async function handleToday(msg: TgMessage) {
   await sendMessage(msg.chat.id, text);
 }
 
+async function handleMyStats(msg: TgMessage) {
+  const adminId = getAdminId(msg);
+  const data = loadDB();
+  const stats = data.admins[adminId];
+
+  if (!stats || (stats.sales === 0 && stats.orders === 0)) {
+    await sendMessage(msg.chat.id,
+      `📊 *ยอดของคุณ \\(${esc(adminId)}\\)*\n\nยังไม่มีข้อมูลยอดขาย\\!\nลองพิมพ์ \`นับ500\` เพื่อเริ่มต้น`,
+    );
+    return;
+  }
+
+  // Rank
+  const entries = Object.entries(data.admins).filter(([, s]) => s.sales > 0);
+  entries.sort(([, a], [, b]) => b.sales - a.sales);
+  const rank = entries.findIndex(([k]) => k === adminId) + 1;
+  const medals = ["🥇", "🥈", "🥉"];
+  const medal = rank <= 3 ? medals[rank - 1] : `#${rank}`;
+
+  const avg = stats.orders > 0 ? Math.floor(stats.sales / stats.orders) : 0;
+
+  const text = [
+    `📊 *ยอดของคุณ ${medal}*`,
+    `👤 ${esc(adminId)}\n`,
+    `━━━━━━━━━━━━━━━━━\n`,
+    `📅 *วันนี้*`,
+    `├ 💵 ยอด: \`${num(stats.today_sales)}\` บาท`,
+    `└ 📦 ออร์เดอร์: \`${stats.today_orders}\` รายการ\n`,
+    `🗓 *รอบนี้รวม*`,
+    `├ 💰 ยอดสะสม: \`${num(stats.sales)}\` บาท`,
+    `├ ✅ ออร์เดอร์: \`${stats.orders}\` รายการ`,
+    `└ 📐 เฉลี่ย: \`${num(avg)}\` บาท/ออร์เดอร์\n`,
+    `━━━━━━━━━━━━━━━━━`,
+    `🏆 อันดับของคุณในทีม: ${medal} อันดับที่ ${rank}`,
+  ].join("\n");
+  await sendMessage(msg.chat.id, text);
+}
+
 async function handleHow(msg: TgMessage) {
   const text = [
     `🍆 *EGGPLANT ASSISTANT — คู่มือการใช้งาน*\n`,
@@ -197,6 +310,8 @@ async function handleHow(msg: TgMessage) {
     `   ➜ ดูแดชบอร์ดยอดขายรวม\n`,
     `📅 /today`,
     `   ➜ ดูสรุปยอดขายเฉพาะวันนี้\n`,
+    `👤 /mystats`,
+    `   ➜ ดูยอดขายเฉพาะของคุณ \\+ อันดับในทีม\n`,
     `🎯 /settarget 8000`,
     `   ➜ ตั้งเป้าหมายใหม่ ใส่ตัวเลขจำนวนเงิน\n`,
     `↩️ /undo`,
@@ -243,16 +358,25 @@ async function handleUndo(msg: TgMessage) {
     await sendMessage(msg.chat.id, "❌ ไม่มีรายการที่สามารถยกเลิกได้", "Markdown");
     return;
   }
-  const amount = data.last_entry.amount;
+  const { amount, admin: lastAdmin } = data.last_entry;
   data.total_sales  = Math.max(0, data.total_sales - amount);
   data.total_orders = Math.max(0, data.total_orders - 1);
   data.today_sales  = Math.max(0, data.today_sales - amount);
   data.today_orders = Math.max(0, data.today_orders - 1);
+
+  // Undo admin stats if we know who did it
+  if (lastAdmin && data.admins[lastAdmin]) {
+    data.admins[lastAdmin].sales  = Math.max(0, data.admins[lastAdmin].sales - amount);
+    data.admins[lastAdmin].orders = Math.max(0, data.admins[lastAdmin].orders - 1);
+    data.admins[lastAdmin].today_sales  = Math.max(0, data.admins[lastAdmin].today_sales - amount);
+    data.admins[lastAdmin].today_orders = Math.max(0, data.admins[lastAdmin].today_orders - 1);
+  }
+
   data.last_entry = null;
   saveDB(data);
   await sendMessage(msg.chat.id,
     `↩️ *ยกเลิกรายการล่าสุดแล้ว\\!*\n\n` +
-    `🗑 ลบออก: \`${num(amount)}\` บาท\n` +
+    `🗑 ลบออก: \`${num(amount)}\` บาท${lastAdmin ? ` \\(${esc(lastAdmin)}\\)` : ""}\n` +
     `💵 ยอดคงเหลือ: \`${num(data.total_sales)}\` บาท\n` +
     `📦 ออร์เดอร์ที่เหลือ: \`${data.total_orders}\` รายการ`
   );
@@ -296,11 +420,13 @@ async function handleReset(msg: TgMessage) {
   data.today_sales  = 0;
   data.today_orders = 0;
   data.last_entry   = null;
+  data.admins       = {};
   saveDB(data);
   await sendMessage(msg.chat.id,
     `🔄 *รีเซ็ตสำเร็จ\\!* เริ่มรอบสัปดาห์ใหม่\n\n` +
     `💰 ยอดขาย: \`0\` บาท\n` +
     `📦 ออร์เดอร์: \`0\` รายการ\n` +
+    `👥 ยอดแอดมินทุกคน: รีเซ็ตแล้ว\n` +
     `🎯 เป้าหมายยังคงอยู่ที่: \`${num(target)}\` บาท\n\n` +
     `💪 มาลุยกัน\\! สัปดาห์นี้ต้องปิดให้ได้\\!`
   );
@@ -330,12 +456,24 @@ async function handleCount(msg: TgMessage, raw: string) {
     );
     return;
   }
+
+  const adminId = getAdminId(msg);
   const data = loadDB();
+
+  // Update global stats
   data.total_sales  += amount;
   data.total_orders += 1;
   data.today_sales  += amount;
   data.today_orders += 1;
-  data.last_entry = { amount };
+  data.last_entry = { amount, admin: adminId };
+
+  // Update per-admin stats
+  const adminStats = ensureAdmin(data, adminId);
+  adminStats.sales  += amount;
+  adminStats.orders += 1;
+  adminStats.today_sales  += amount;
+  adminStats.today_orders += 1;
+
   saveDB(data);
 
   const { total_sales, total_orders, today_orders, weekly_target } = data;
@@ -347,7 +485,8 @@ async function handleCount(msg: TgMessage, raw: string) {
     : `🎯 เหลืออีก \`${num(remaining)}\` บาท \\(${pct}%\\)`;
 
   const text =
-    `💰 *\\+${esc(num(amount))} บาท* บันทึกแล้ว\\!\n\n` +
+    `💰 *\\+${esc(num(amount))} บาท* บันทึกแล้ว\\!\n` +
+    `👤 โดย: ${esc(adminId)}\n\n` +
     `📦 ออร์เดอร์รอบนี้: \`${total_orders}\` รายการ\n` +
     `📅 ออร์เดอร์วันนี้: \`${today_orders}\` รายการ\n` +
     `💵 ยอดรวมรอบนี้: \`${num(total_sales)}\` บาท\n` +
@@ -369,6 +508,7 @@ async function handleMessage(msg: TgMessage) {
 
   if (cmd === "/start" || cmd === "/status") return handleStatus(msg);
   if (cmd === "/today")                      return handleToday(msg);
+  if (cmd === "/mystats")                    return handleMyStats(msg);
   if (cmd === "/how")                        return handleHow(msg);
   if (cmd === "/settarget")                  return handleSetTarget(msg, args);
   if (cmd === "/undo")                       return handleUndo(msg);
@@ -411,7 +551,7 @@ export async function setupWebhook() {
   }
 }
 
-// ─── Webhook Route ─────────────────────────────────────────────────────────────
+// ─── API Routes ─────────────────────────────────────────────────────────────────
 
 router.get("/bot-status", (_req, res) => {
   try {
@@ -422,6 +562,7 @@ router.get("/bot-status", (_req, res) => {
       weekly_target: data.weekly_target,
       today_sales: data.today_sales,
       today_orders: data.today_orders,
+      admins: data.admins,
     });
   } catch {
     res.status(500).json({ error: "Could not read database" });
