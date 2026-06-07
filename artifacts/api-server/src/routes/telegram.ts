@@ -413,6 +413,21 @@ export async function setupWebhook() {
 
 // ─── Webhook Route ─────────────────────────────────────────────────────────────
 
+router.get("/bot-status", (_req, res) => {
+  try {
+    const data = loadDB();
+    res.json({
+      total_sales: data.total_sales,
+      total_orders: data.total_orders,
+      weekly_target: data.weekly_target,
+      today_sales: data.today_sales,
+      today_orders: data.today_orders,
+    });
+  } catch {
+    res.status(500).json({ error: "Could not read database" });
+  }
+});
+
 router.post("/telegram", (req, res) => {
   res.sendStatus(200);
   const message: TgMessage | undefined = req.body?.message ?? req.body?.edited_message;
