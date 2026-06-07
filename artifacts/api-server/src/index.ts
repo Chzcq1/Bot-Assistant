@@ -22,5 +22,13 @@ app.listen(port, (err) => {
     process.exit(1);
   }
   logger.info({ port }, "Server listening");
-  setupWebhook();
+
+  // Only register the Telegram webhook in production.
+  // In dev mode the production webhook must stay intact so the deployed bot
+  // keeps working without interruption.
+  if (process.env.NODE_ENV === "production") {
+    setupWebhook();
+  } else {
+    logger.info("Dev mode — skipping webhook registration (production webhook preserved)");
+  }
 });

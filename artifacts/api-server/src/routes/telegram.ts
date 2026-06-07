@@ -305,38 +305,20 @@ async function handleMyStats(msg: TgMessage) {
 
 async function handleHow(msg: TgMessage) {
   const text = [
-    `🍆 *EGGPLANT ASSISTANT — คู่มือการใช้งาน*\n`,
-    `━━━━━━━━━━━━━━━━━\n`,
-    `📌 *วิธีนับยอดขาย*`,
-    `พิมพ์ \`นับ\` ตามด้วยตัวเลข เช่น:`,
-    `\`นับ500\` หรือ \`นับ1200\``,
-    `บอทจะบวกยอดเข้าระบบและเพิ่มออร์เดอร์ 1 รายการทันที\n`,
-    `━━━━━━━━━━━━━━━━━\n`,
-    `📋 *รายการคำสั่งทั้งหมด*\n`,
-    `📊 /start หรือ /status`,
-    `   ➜ ดูแดชบอร์ดยอดขายรวม\n`,
-    `📅 /today`,
-    `   ➜ ดูสรุปยอดขายเฉพาะวันนี้\n`,
-    `👤 /mystats`,
-    `   ➜ ดูยอดขายเฉพาะของคุณ \\+ อันดับในทีม\n`,
-    `🎯 /settarget 8000`,
-    `   ➜ ตั้งเป้าหมายใหม่ ใส่ตัวเลขจำนวนเงิน\n`,
-    `↩️ /undo`,
-    `   ➜ ยกเลิกการนับครั้งล่าสุด\n`,
-    `📝 /note ข้อความ`,
-    `   ➜ บันทึกโน้ตหรือหมายเหตุ\n`,
-    `📒 /notes`,
-    `   ➜ ดูโน้ตทั้งหมดที่บันทึกไว้\n`,
-    `📢 /broadcast ข้อความ`,
-    `   ➜ จัดรูปแบบประกาศพร้อม copy ไปใช้\n`,
-    `🔄 /reset`,
-    `   ➜ รีเซ็ตยอดขายและออร์เดอร์เป็น 0 \\(เป้าหมายยังคงเดิม\\)\n`,
-    `❓ /how`,
-    `   ➜ แสดงคู่มือการใช้งานนี้\n`,
+    `🍆 *EGGPLANT BOT — Quick Ref*\n`,
+    `นับยอด: พิมพ์ \`นับ500\` \`นับ1200\`\n`,
     `━━━━━━━━━━━━━━━━━`,
-    `💡 *ตัวอย่างการใช้งานจริง*`,
-    `ปิดออร์เดอร์ 350 บาท → พิมพ์ \`นับ350\``,
-    `ปิดออร์เดอร์ 1,200 บาท → พิมพ์ \`นับ1200\``,
+    `/status — แดชบอร์ดรวม`,
+    `/today — ยอดวันนี้`,
+    `/mystats — ยอดของฉัน`,
+    `/settarget 8000 — ตั้งเป้า`,
+    `/undo — ยกเลิกครั้งล่าสุด`,
+    `/note ข้อความ — บันทึกโน้ต`,
+    `/notes — ดูโน้ตทั้งหมด`,
+    `/delnote 1 — ลบโน้ตที่ 1`,
+    `/clearnotes — ลบโน้ตทั้งหมด`,
+    `/broadcast ข้อความ — ประกาศ`,
+    `/reset — รีเซ็ตยอดใหม่`,
   ].join("\n");
   await sendMessage(msg.chat.id, text);
 }
@@ -409,14 +391,49 @@ async function handleNote(msg: TgMessage, noteText: string) {
 async function handleNotes(msg: TgMessage) {
   const data = loadDB();
   if (!data.notes || data.notes.length === 0) {
-    await sendMessage(msg.chat.id, "📒 ยังไม่มีโน้ตที่บันทึกไว้", "Markdown");
+    await sendMessage(msg.chat.id, "📒 ยังไม่มีโน้ต\nพิมพ์ `/note ข้อความ` เพื่อเพิ่ม", "Markdown");
     return;
   }
-  const lines = ["📒 *โน้ตทั้งหมด*\n\n━━━━━━━━━━━━━━━━━\n"];
+  const lines = [`📒 *โน้ต \\(${data.notes.length} รายการ\\)*\n━━━━━━━━━━━━━━━━━\n`];
   [...data.notes].reverse().forEach((n, i) => {
     lines.push(`${i + 1}\\. 🕐 _${esc(n.time)}_\n   📌 ${esc(n.text)}\n`);
   });
+  lines.push(`━━━━━━━━━━━━━━━━━\n_ลบ: /delnote 1  ล้างทั้งหมด: /clearnotes_`);
   await sendMessage(msg.chat.id, lines.join("\n"));
+}
+
+async function handleDelNote(msg: TgMessage, args: string) {
+  const n = parseInt(args.trim(), 10);
+  const data = loadDB();
+  const total = data.notes.length;
+  if (isNaN(n) || n < 1 || n > total) {
+    await sendMessage(msg.chat.id,
+      total === 0
+        ? "📒 ยังไม่มีโน้ต"
+        : `❌ ใส่ตัวเลข 1–${total} เช่น \`/delnote 1\``,
+      "Markdown"
+    );
+    return;
+  }
+  // /notes shows newest-first, so index 1 = last element
+  const realIdx = total - n;
+  const removed = data.notes.splice(realIdx, 1)[0];
+  saveDB(data);
+  await sendMessage(msg.chat.id,
+    `🗑 *ลบโน้ตแล้ว\\!*\n\n📌 ${esc(removed.text)}\n\nเหลือโน้ต ${data.notes.length} รายการ`
+  );
+}
+
+async function handleClearNotes(msg: TgMessage) {
+  const data = loadDB();
+  const count = data.notes.length;
+  if (count === 0) {
+    await sendMessage(msg.chat.id, "📒 ไม่มีโน้ตให้ลบ", "Markdown");
+    return;
+  }
+  data.notes = [];
+  saveDB(data);
+  await sendMessage(msg.chat.id, `🗑 *ลบโน้ตทั้งหมด ${count} รายการแล้ว\\!*`);
 }
 
 async function handleReset(msg: TgMessage) {
@@ -521,6 +538,8 @@ async function handleMessage(msg: TgMessage) {
   if (cmd === "/undo")                       return handleUndo(msg);
   if (cmd === "/note")                       return handleNote(msg, args);
   if (cmd === "/notes")                      return handleNotes(msg);
+  if (cmd === "/delnote")                    return handleDelNote(msg, args);
+  if (cmd === "/clearnotes")                 return handleClearNotes(msg);
   if (cmd === "/reset")                      return handleReset(msg);
   if (cmd === "/broadcast" || cmd === "/announce") return handleBroadcast(msg, args);
 
