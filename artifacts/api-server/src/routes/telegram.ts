@@ -167,12 +167,19 @@ function randomQuote(): string {
 
 // ─── Telegram API ──────────────────────────────────────────────────────────────
 
+const TOPIC_ID = 190;
+
 async function sendMessage(chatId: number, text: string, parseMode = "MarkdownV2") {
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: parseMode }),
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: parseMode,
+        message_thread_id: TOPIC_ID,
+      }),
     });
   } catch (err) {
     logger.error({ err }, "Failed to send Telegram message");

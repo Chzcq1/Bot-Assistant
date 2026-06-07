@@ -1,15 +1,27 @@
 {
     "total_sales": 800,
-    "total_orders": 1,
+    "total_orders": 2,
     "weekly_target": 1500,
-    "today_sales": 0,
-    "today_orders": 0,
+    "today_sales": 800,
+    "today_orders": 2,
     "last_date": "2026-06-07",
-    "last_entry": null,
+    "last_entry": {
+        "amount": 100,
+        "admin": "@Signals891"
+    },
     "notes": [
         {
             "text": "ให้เขาไปที่ Settings > Data and Storage > Storage Usage > กด Clear Telegram Cache",
             "time": "07/06 03:31"
         }
-    ]
+    ],
+    "admins": {
+        "@Signals891": {
+            "sales": 800,
+            "orders": 2,
+            "today_sales": 800,
+            "today_orders": 2,
+            "last_date": "2026-06-07"
+        }
+    }
 }
