@@ -5,6 +5,9 @@ import os
 import random
 import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_BKK = ZoneInfo("Asia/Bangkok")
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
@@ -43,7 +46,7 @@ DB_DEFAULT = {
 }
 
 def today_str():
-    return datetime.now().strftime("%Y-%m-%d")
+    return datetime.now(_BKK).strftime("%Y-%m-%d")
 
 def load_db():
     if not os.path.exists(DB_FILE):
@@ -138,7 +141,7 @@ def build_dashboard(data):
     remaining     = target - total_sales
     pct           = min(int((total_sales / target) * 100), 100) if target > 0 else 0
     bar           = progress_bar(pct)
-    today_date    = datetime.now().strftime("%d/%m/%Y")
+    today_date    = datetime.now(_BKK).strftime("%d/%m/%Y")
     chart         = build_growth_chart(data.get("daily_history", []))
 
     if total_sales >= target:
@@ -226,7 +229,7 @@ def cmd_today(message):
     today_sales  = data.get("today_sales", 0)
     today_orders = data.get("today_orders", 0)
     target       = data["weekly_target"]
-    today_date   = datetime.now().strftime("%d/%m/%Y")
+    today_date   = datetime.now(_BKK).strftime("%d/%m/%Y")
 
     avg = (today_sales / today_orders) if today_orders > 0 else 0
 
@@ -335,7 +338,7 @@ def cmd_note(message):
     if "notes" not in data:
         data["notes"] = []
 
-    timestamp = datetime.now().strftime("%d/%m %H:%M")
+    timestamp = datetime.now(_BKK).strftime("%d/%m %H:%M")
     data["notes"].append({"text": note_text, "time": timestamp})
     if len(data["notes"]) > 20:
         data["notes"] = data["notes"][-20:]
