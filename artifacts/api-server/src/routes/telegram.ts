@@ -636,6 +636,20 @@ async function handleBroadcast(msg: TgMessage, content: string) {
   await sendMessage(msg.chat.id, formatted, "Markdown");
 }
 
+function buildTeamBreakdown(admins: { [key: string]: AdminStats }): string {
+  const entries = Object.entries(admins).filter(([, s]) => s.sales > 0 || s.orders > 0);
+  if (entries.length === 0) return "";
+  entries.sort(([, a], [, b]) => b.sales - a.sales);
+  const medals = ["🥇", "🥈", "🥉"];
+  const lines = [`\n━━━━━━━━━━━━━━━━━\n👥 *ยอดทีม \\(รอบนี้\\)*\n`];
+  entries.forEach(([name, stats], i) => {
+    const medal = medals[i] ?? `${i + 1}\\.`;
+    const prefix = i === entries.length - 1 ? "└" : "├";
+    lines.push(`${prefix} ${medal} ${esc(name)}: \`${num(stats.sales)}\` บาท \\(${stats.orders} ออร์เดอร์\\)`);
+  });
+  return lines.join("\n");
+}
+
 async function handleCount(msg: TgMessage, raw: string) {
   const amount = parseFloat(raw.replace(/,/g, "").trim());
   if (isNaN(amount) || amount <= 0) {
@@ -664,21 +678,25 @@ async function handleCount(msg: TgMessage, raw: string) {
   updateDailyHistory(data, amount);
   saveDB(data);
 
-  const { total_sales, total_orders, today_orders, weekly_target } = data;
+  const { total_sales, total_orders, weekly_target } = data;
   const remaining = weekly_target - total_sales;
   const pct = weekly_target > 0 ? Math.min(Math.floor((total_sales / weekly_target) * 100), 100) : 100;
+  const bar = progressBar(pct);
 
   const statusLine = total_sales >= weekly_target
     ? `🎉 *TARGET ACHIEVED\\!* ปิดเป้าแล้ว\\!`
-    : `🎯 เหลืออีก \`${num(remaining)}\` บาท \\(${pct}%\\)`;
+    : `🎯 เหลืออีก \`${num(remaining)}\` บาท`;
+
+  const teamSection = buildTeamBreakdown(data.admins);
 
   const text =
     `💰 *\\+${esc(num(amount))} บาท* บันทึกแล้ว\\!\n` +
     `👤 โดย: ${esc(adminId)}\n\n` +
     `📦 ออร์เดอร์รอบนี้: \`${total_orders}\` รายการ\n` +
-    `📅 ออร์เดอร์วันนี้: \`${today_orders}\` รายการ\n` +
     `💵 ยอดรวมรอบนี้: \`${num(total_sales)}\` บาท\n` +
-    `${statusLine}\n\n` +
+    `📈 \`${pct}%\` ${bar}\n` +
+    `${statusLine}` +
+    `${teamSection}\n\n` +
     `${esc(randomQuote())}`;
 
   await sendMessage(msg.chat.id, text);

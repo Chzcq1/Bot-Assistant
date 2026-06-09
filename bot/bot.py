@@ -524,6 +524,20 @@ def cmd_broadcast(message):
 
 # ─── นับ[amount] Handler ───────────────────────────────────────────────────────
 
+def build_team_breakdown(admins):
+    entries = [(k, v) for k, v in admins.items() if v.get("sales", 0) > 0 or v.get("orders", 0) > 0]
+    if not entries:
+        return ""
+    entries.sort(key=lambda x: x[1].get("sales", 0), reverse=True)
+    medals = ["🥇", "🥈", "🥉"]
+    lines = ["\n━━━━━━━━━━━━━━━━━\n👥 *ยอดทีม \\(รอบนี้\\)*\n"]
+    for i, (name, stats) in enumerate(entries):
+        medal = medals[i] if i < 3 else f"{i+1}\\."
+        prefix = "└" if i == len(entries) - 1 else "├"
+        lines.append(f"{prefix} {medal} {esc(name)}: `{num(stats['sales'])}` บาท \\({stats['orders']} ออร์เดอร์\\)")
+    return "\n".join(lines)
+
+
 @bot.message_handler(func=lambda msg: msg.text and msg.text.strip().startswith("นับ"))
 def handle_count(message):
     raw = message.text.strip()[3:].replace(",", "").strip()
@@ -542,34 +556,62 @@ def handle_count(message):
         )
         return
 
+    # ─── track admin name ────────────────────────────────────────────────────────
+    sender = message.from_user
+    if sender and sender.username:
+        admin_id = f"@{sender.username}"
+    elif sender and sender.first_name:
+        admin_id = f"{sender.first_name} {sender.last_name}".strip() if sender.last_name else sender.first_name
+    else:
+        admin_id = f"User{sender.id if sender else 'unknown'}"
+
     data = load_db()
     data["total_sales"]  += amount
     data["total_orders"] += 1
     data["today_sales"]   = data.get("today_sales", 0) + amount
     data["today_orders"]  = data.get("today_orders", 0) + 1
-    data["last_entry"]    = {"amount": amount}
+    data["last_entry"]    = {"amount": amount, "admin": admin_id}
+
+    # ─── per-admin stats ─────────────────────────────────────────────────────────
+    admins = data.setdefault("admins", {})
+    today  = today_str()
+    if admin_id not in admins:
+        admins[admin_id] = {"sales": 0, "orders": 0, "today_sales": 0, "today_orders": 0, "last_date": ""}
+    admin_stats = admins[admin_id]
+    if admin_stats.get("last_date") != today:
+        admin_stats["today_sales"]  = 0
+        admin_stats["today_orders"] = 0
+        admin_stats["last_date"]    = today
+    admin_stats["sales"]        += amount
+    admin_stats["orders"]       += 1
+    admin_stats["today_sales"]  += amount
+    admin_stats["today_orders"] += 1
+
     update_daily_history(data, amount)
     save_db(data)
 
-    total_sales   = data["total_sales"]
-    total_orders  = data["total_orders"]
-    today_orders  = data["today_orders"]
-    target        = data["weekly_target"]
-    remaining     = target - total_sales
-    pct           = min(int((total_sales / target) * 100), 100) if target > 0 else 100
-    quote         = random.choice(MOTIVATIONAL_QUOTES)
+    total_sales  = data["total_sales"]
+    total_orders = data["total_orders"]
+    target       = data["weekly_target"]
+    remaining    = target - total_sales
+    pct          = min(int((total_sales / target) * 100), 100) if target > 0 else 100
+    bar          = progress_bar(pct)
+    quote        = random.choice(MOTIVATIONAL_QUOTES)
+    team_section = build_team_breakdown(admins)
 
     if total_sales >= target:
         status_line = "🎉 *TARGET ACHIEVED\\!* ปิดเป้าแล้ว\\!"
     else:
-        status_line = f"🎯 เหลืออีก `{num(remaining)}` บาท \\({pct}%\\)"
+        status_line = f"🎯 เหลืออีก `{num(remaining)}` บาท"
 
     reply = (
-        f"💰 *\\+{esc(num(amount))} บาท* บันทึกแล้ว\\!\n\n"
+        f"💰 *\\+{esc(num(amount))} บาท* บันทึกแล้ว\\!\n"
+        f"👤 โดย: {esc(admin_id)}\n\n"
         f"📦 ออร์เดอร์รอบนี้: `{total_orders}` รายการ\n"
-        f"📅 ออร์เดอร์วันนี้: `{today_orders}` รายการ\n"
         f"💵 ยอดรวมรอบนี้: `{num(total_sales)}` บาท\n"
-        f"{status_line}\n\n"
+        f"📈 `{pct}%` {bar}\n"
+        f"{status_line}"
+        f"{team_section}\n\n"
         f"{esc(quote)}"
     )
     bot.send_message(
@@ -582,5 +624,11 @@ def handle_count(message):
 
 # ─── Start ─────────────────────────────────────────────────────────────────────
 
-print("🍆 Eggplant Assistant is running...")
-bot.infinity_polling(timeout=30, long_polling_timeout=30)
+if __name__ == "__main__":
+    use_polling = os.environ.get("USE_POLLING", "").lower() in ("1", "true", "yes")
+    if not use_polling:
+        print("🍆 bot.py: USE_POLLING not set — webhook mode active, skipping polling.")
+        print("   Set USE_POLLING=1 to run this file directly for local testing.")
+    else:
+        print("🍆 Eggplant Assistant is running (polling mode)...")
+        bot.infinity_polling(timeout=30, long_polling_timeout=30)

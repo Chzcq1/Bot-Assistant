@@ -4,8 +4,9 @@
     "weekly_target": 1500,
     "today_sales": 0,
     "today_orders": 0,
-    "last_date": "2026-06-07",
+    "last_date": "2026-06-09",
     "last_entry": null,
     "notes": [],
-    "admins": {}
+    "admins": {},
+    "daily_history": []
 }
